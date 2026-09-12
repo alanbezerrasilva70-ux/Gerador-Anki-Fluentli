@@ -1,0 +1,30 @@
+name: Gerador Anki Fluentli
+on:
+  workflow_dispatch: # Permite que você inicie o script manualmente com um botão
+
+jobs:
+  build:
+    runs-on: ubuntu-latest # O servidor da nuvem que vai rodar o código
+    steps:
+      - name: Baixar código do repositório
+        uses: actions/checkout@v3
+
+      - name: Configurar o Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Instalar dependências necessárias
+        run: |
+          pip install -r requirements.txt
+
+      - name: Executar a Auditoria e Geração do Anki
+        run: python gerador_muti.py
+
+      - name: Disponibilizar os Arquivos Prontos para Download
+        uses: actions/upload-artifact@v3
+        with:
+          name: Fluentli-Decks-e-Cache
+          path: |
+            *.apkg
+            cache_traducoes*.json
