@@ -1,3 +1,5 @@
 .venv/
 __pycache__/
+audios/
+audios_poliglota/
 *.apkg
