@@ -321,8 +321,6 @@ async def processar_banco_dados(caminho_arquivo: str):
 
         linha = linha.strip()
         if not linha: continue
-        linha = linha.strip()
-        if not linha: continue
 
         partes = extrair_partes_linha(linha)
 
