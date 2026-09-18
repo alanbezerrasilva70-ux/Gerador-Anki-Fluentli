@@ -344,7 +344,8 @@ async def processar_banco_dados(caminho_arquivo: str):
             chave_lang = f"{chave_cache_base}_{lang}"
             chave_legacy = f"{index}_{frase_en}_{lang}"
             chave_palavra_lang = f"palavra_{numero_registro}_{palavra_en}_{lang}"
-# === 1. AUDITORIA E TRADUÇÃO DA FRASE ===
+
+            # === 1. AUDITORIA E TRADUÇÃO DA FRASE ===
             frase_cache = cache.get(chave_lang) or cache.get(chave_legacy)
             resultado_frase = await traduzir_com_timeout(frase_en, config['code'])
             
@@ -405,7 +406,8 @@ async def processar_banco_dados(caminho_arquivo: str):
                 ]
             )
             baralhos[lang].add_note(nota)
-else:
+
+    else:
         # Se o loop processar todas as 6070 linhas sem estourar o tempo
         print("\n[SUCESSO] Todo o banco de dados foi processado e finalizado!")
         with open(arquivo_progresso, "w") as f:
@@ -429,11 +431,6 @@ else:
 
 if __name__ == "__main__":
     ARQUIVO_ALVO = "anki_principal_v2.tsv"
-    
-    if os.name == 'nt':
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        
-    asyncio.run(processar_banco_dados(ARQUIVO_ALVO))
     
     if os.name == 'nt':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
