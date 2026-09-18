@@ -278,6 +278,19 @@ async def gerar_audio_com_timeout(texto: str, caminho: str, voz: str, timeout=20
 # 5. LOOP CENTRAL ASSÍNCRONO
 # ==========================================
 async def processar_banco_dados(caminho_arquivo: str):
+    # --- SISTEMA ANTI-CORTE DA NUVEM ---
+    tempo_inicio = time.time()
+    tempo_limite = 5.5 * 3600 # Limite seguro de 5 horas e meia
+    
+    arquivo_progresso = "linha_progresso.txt"
+    linha_inicial = 0
+    if os.path.exists(arquivo_progresso):
+        with open(arquivo_progresso, "r") as f:
+            conteudo = f.read().strip()
+            if conteudo.isdigit():
+                linha_inicial = int(conteudo)
+    # -----------------------------------
+
     pasta_audios = "audios_poliglota"
     os.makedirs(pasta_audios, exist_ok=True)
     cache = carregar_cache()
@@ -292,9 +305,22 @@ async def processar_banco_dados(caminho_arquivo: str):
     with open(caminho_arquivo, 'r', encoding='utf-8') as f:
         linhas = f.readlines()
 
-    print(f"[*] Base carregada: {len(linhas)} registros. Iniciando montagem dos cards...\n")
+    print(f"[*] Base: {len(linhas)} registros. Continuando a partir da linha {linha_inicial}...\n")
 
     for index, linha in enumerate(linhas):
+        # Pula as linhas que já foram empacotadas no lote anterior
+        if index < linha_inicial:
+            continue
+            
+        # Verifica o cronômetro para não ser morto pelo GitHub
+        if time.time() - tempo_inicio > tempo_limite:
+            print(f"\n[ALERTA] Limite de 5h30 atingido! Pausando no registro {index}.")
+            with open(arquivo_progresso, "w") as f:
+                f.write(str(index))
+            break
+
+        linha = linha.strip()
+        if not linha: continue
         linha = linha.strip()
         if not linha: continue
 
@@ -381,7 +407,11 @@ async def processar_banco_dados(caminho_arquivo: str):
                 ]
             )
             baralhos[lang].add_note(nota)
-
+else:
+        # Se o loop processar todas as 6070 linhas sem estourar o tempo
+        print("\n[SUCESSO] Todo o banco de dados foi processado e finalizado!")
+        with open(arquivo_progresso, "w") as f:
+            f.write("0")
     # ==========================================
     # 6. EMPACOTAMENTO FINAL
     # ==========================================
