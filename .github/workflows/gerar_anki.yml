@@ -2,6 +2,9 @@ name: Gerador Anki Fluentli
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -21,7 +24,13 @@ jobs:
       - name: Executar a Auditoria e Geração do Anki
         run: python -u gerador_muti.py
 
-      - name: Disponibilizar os Arquivos Prontos para Download
+      - name: Salvar Progresso Automático na Nuvem
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Salvando lote atual (Cache e Arquivo de Progresso)"
+          file_pattern: "cache_traducoes*.json linha_progresso.txt"
+
+      - name: Disponibilizar Arquivos Prontos
         uses: actions/upload-artifact@v4
         with:
           name: Fluentli-Decks-e-Cache
