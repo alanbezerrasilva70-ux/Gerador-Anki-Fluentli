@@ -434,3 +434,8 @@ if __name__ == "__main__":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         
     asyncio.run(processar_banco_dados(ARQUIVO_ALVO))
+    
+    if os.name == 'nt':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        
+    asyncio.run(processar_banco_dados(ARQUIVO_ALVO))
