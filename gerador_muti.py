@@ -412,6 +412,7 @@ else:
         print("\n[SUCESSO] Todo o banco de dados foi processado e finalizado!")
         with open(arquivo_progresso, "w") as f:
             f.write("0")
+
     # ==========================================
     # 6. EMPACOTAMENTO FINAL
     # ==========================================
