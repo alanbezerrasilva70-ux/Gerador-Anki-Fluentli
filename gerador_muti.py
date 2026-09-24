@@ -7,7 +7,7 @@ import shutil
 import zipfile
 import genanki
 import edge_tts
-from deep_translator import GoogleTranslator, MyMemoryTranslator
+from deep_translator import GoogleTranslator
 # ==========================================
 # IMPORTAÇÃO DOS MOTORES DE TRANSLITERAÇÃO
 # ==========================================
@@ -193,7 +193,7 @@ def salvar_cache(cache):
         pass
 
 async def traduzir_com_insistencia(texto: str, config_code: str):
-    """Loop infinito com backoff e Fallback (medida de segurança anti-bloqueio)."""
+    """Loop infinito com Freio de Emergência de 5 minutos para bloqueios de IP do Google."""
     tentativa = 1
     espera = 2
     
@@ -202,27 +202,30 @@ async def traduzir_com_insistencia(texto: str, config_code: str):
             await asyncio.sleep(espera)
             
             def _traduzir():
-                # MEDIDA DE SEGURANÇA: Alterna os motores a cada tentativa para evitar o banimento do IP
-                if tentativa % 2 != 0:
-                    return GoogleTranslator(source='en', target=config_code).translate(texto)
-                else:
-                    return MyMemoryTranslator(source='en', target=config_code).translate(texto)
+                return GoogleTranslator(source='en', target=config_code).translate(texto)
                     
             resultado = await asyncio.wait_for(asyncio.to_thread(_traduzir), timeout=25)
             
             # Validação rigorosa: Não pode ser vazio e não pode ter erro.
             if resultado and isinstance(resultado, str) and resultado.strip() and "Erro de Tradução" not in resultado:
+                # Reset da espera após um sucesso
                 return limpar_texto(resultado)
                 
         except Exception as e:
-            motor_atual = "GoogleTranslator" if tentativa % 2 != 0 else "MyMemoryTranslator"
-            # Agora o código revela a "senha/motivo" exato do erro na tela (ex: HTTP 429 Too Many Requests)
-            print(f"    [!] Erro da API ({config_code}) no {motor_atual}: {str(e)[:70]}...")
-            print(f"    [!] Tentativa {tentativa}. Aguardando {espera}s para tentar novamente, sem pular a linha...")
+            erro_str = str(e)
+            print(f"    [!] Erro da API ({config_code}) no GoogleTranslator: {erro_str[:70]}...")
+            
+            # MEDIDA DE SEGURANÇA: Se for bloqueio de IP, aciona o resfriamento longo
+            if "too many requests" in erro_str.lower():
+                espera = 300  # Pausa de 5 minutos
+                print("    [!] 🛑 BLOQUEIO DE IP DETECTADO (Too Many Requests).")
+                print(f"    [!] O script está pausado e aguardando 5 minutos para o Google liberar o IP...")
+            else:
+                espera = min(espera + 5, 30) # Erros comuns aguardam até 30s
+                
+            print(f"    [!] Tentativa {tentativa}. Sem pular a linha. Retentando em breve...")
             
         tentativa += 1
-        # Aumenta a espera gradualmente até um teto de 60 segundos para forçar o resfriamento do IP
-        espera = min(espera + 5, 60)
 
 async def gerar_audio_com_insistencia(texto: str, caminho: str, voz: str):
     """Garante a entrega do arquivo MP3 independentemente de instabilidades de rede."""
