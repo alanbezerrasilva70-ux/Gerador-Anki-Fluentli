@@ -7,8 +7,7 @@ import shutil
 import zipfile
 import genanki
 import edge_tts
-from deep_translator import GoogleTranslator
-
+from deep_translator import GoogleTranslator, MyMemoryTranslator
 # ==========================================
 # IMPORTAÇÃO DOS MOTORES DE TRANSLITERAÇÃO
 # ==========================================
@@ -194,25 +193,36 @@ def salvar_cache(cache):
         pass
 
 async def traduzir_com_insistencia(texto: str, config_code: str):
-    """Loop infinito com backoff. O script só avança se a tradução for um sucesso absoluto."""
+    """Loop infinito com backoff e Fallback (medida de segurança anti-bloqueio)."""
     tentativa = 1
     espera = 2
+    
     while True:
         try:
             await asyncio.sleep(espera)
+            
             def _traduzir():
-                return GoogleTranslator(source='en', target=config_code).translate(texto)
-                
+                # MEDIDA DE SEGURANÇA: Alterna os motores a cada tentativa para evitar o banimento do IP
+                if tentativa % 2 != 0:
+                    return GoogleTranslator(source='en', target=config_code).translate(texto)
+                else:
+                    return MyMemoryTranslator(source='en', target=config_code).translate(texto)
+                    
             resultado = await asyncio.wait_for(asyncio.to_thread(_traduzir), timeout=25)
             
             # Validação rigorosa: Não pode ser vazio e não pode ter erro.
             if resultado and isinstance(resultado, str) and resultado.strip() and "Erro de Tradução" not in resultado:
                 return limpar_texto(resultado)
+                
         except Exception as e:
-            print(f"    [!] Alerta da API ({config_code}). Tentativa {tentativa}. Aguardando para tentar novamente...")
+            motor_atual = "GoogleTranslator" if tentativa % 2 != 0 else "MyMemoryTranslator"
+            # Agora o código revela a "senha/motivo" exato do erro na tela (ex: HTTP 429 Too Many Requests)
+            print(f"    [!] Erro da API ({config_code}) no {motor_atual}: {str(e)[:70]}...")
+            print(f"    [!] Tentativa {tentativa}. Aguardando {espera}s para tentar novamente, sem pular a linha...")
             
         tentativa += 1
-        espera = min(espera + 3, 30) # Aumenta gradualmente a espera para evitar ban de IP
+        # Aumenta a espera gradualmente até um teto de 60 segundos para forçar o resfriamento do IP
+        espera = min(espera + 5, 60)
 
 async def gerar_audio_com_insistencia(texto: str, caminho: str, voz: str):
     """Garante a entrega do arquivo MP3 independentemente de instabilidades de rede."""
@@ -411,4 +421,3 @@ if __name__ == "__main__":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         
     asyncio.run(processar_banco_dados(ARQUIVO_ALVO))
-
