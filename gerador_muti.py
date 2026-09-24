@@ -1,3 +1,4 @@
+import translators as ts
 import random
 import os
 import re
@@ -194,39 +195,43 @@ def salvar_cache(cache):
         pass
 
 async def traduzir_com_insistencia(texto: str, config_code: str):
-    """Loop infinito com Freio de Emergência de 5 minutos para bloqueios de IP do Google."""
+    """
+    Rodízio tático de motores (Microsoft -> Google -> Yandex) para dividir 
+    a carga de 48 mil traduções e driblar o bloqueio de IP.
+    """
     tentativa = 1
-    espera = 2
+    # Usando 3 empresas diferentes para não sobrecarregar nenhuma
+    motores = ['bing', 'google', 'yandex'] 
     
     while True:
+        motor_atual = motores[(tentativa - 1) % len(motores)]
+        
+        # Ajuste cirúrgico de siglas para os motores não quebrarem no chinês
+        lang_code = config_code
+        if config_code == 'zh-CN':
+            if motor_atual == 'bing': lang_code = 'zh-Hans'
+            elif motor_atual == 'yandex': lang_code = 'zh'
+            
         try:
-            # Atraso aleatório entre 2.7 e 5.8 segundos para imitar o tempo de clique de um humano
-            tempo_humano = random.uniform(2.7, 5.8)
-            await asyncio.sleep(tempo_humano)
+            # Pausa aleatória para simular um clique humano (fuga de radar)
+            await asyncio.sleep(random.uniform(2.5, 4.8))
             
             def _traduzir():
-                return GoogleTranslator(source='en', target=config_code).translate(texto)
+                return ts.translate_text(
+                    texto, 
+                    translator=motor_atual, 
+                    from_language='en', 
+                    to_language=lang_code
+                )
                     
             resultado = await asyncio.wait_for(asyncio.to_thread(_traduzir), timeout=25)
             
-            # Validação rigorosa: Não pode ser vazio e não pode ter erro.
-            if resultado and isinstance(resultado, str) and resultado.strip() and "Erro de Tradução" not in resultado:
-                # Reset da espera após um sucesso
+            # Validação rígida: só passa de linha se a tradução for um sucesso real
+            if resultado and isinstance(resultado, str) and resultado.strip():
                 return limpar_texto(resultado)
                 
         except Exception as e:
-            erro_str = str(e)
-            print(f"    [!] Erro da API ({config_code}) no GoogleTranslator: {erro_str[:70]}...")
-            
-            # MEDIDA DE SEGURANÇA: Se for bloqueio de IP, aciona o resfriamento longo
-            if "too many requests" in erro_str.lower():
-                espera = 300  # Pausa de 5 minutos
-                print("    [!] 🛑 BLOQUEIO DE IP DETECTADO (Too Many Requests).")
-                print(f"    [!] O script está pausado e aguardando 5 minutos para o Google liberar o IP...")
-            else:
-                espera = min(espera + 5, 30) # Erros comuns aguardam até 30s
-                
-            print(f"    [!] Tentativa {tentativa}. Sem pular a linha. Retentando em breve...")
+            print(f"    [!] Bloqueio no {motor_atual} ({lang_code}). Alternando servidor (Tentativa {tentativa})...")
             
         tentativa += 1
 
