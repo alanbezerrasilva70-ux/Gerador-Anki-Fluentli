@@ -1,3 +1,4 @@
+translators
 edge-tts
 deep-translator
 genanki
