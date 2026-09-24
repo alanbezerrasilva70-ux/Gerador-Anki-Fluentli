@@ -1,3 +1,4 @@
+import random
 import os
 import re
 import json
@@ -199,7 +200,9 @@ async def traduzir_com_insistencia(texto: str, config_code: str):
     
     while True:
         try:
-            await asyncio.sleep(espera)
+            # Atraso aleatório entre 2.7 e 5.8 segundos para imitar o tempo de clique de um humano
+            tempo_humano = random.uniform(2.7, 5.8)
+            await asyncio.sleep(tempo_humano)
             
             def _traduzir():
                 return GoogleTranslator(source='en', target=config_code).translate(texto)
