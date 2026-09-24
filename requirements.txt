@@ -1,1 +1,1 @@
-pip install edge-tts deep-translator genanki pypinyin pykakasi transliterate unidecode
+ edge-tts deep-translator genanki pypinyin pykakasi transliterate unidecode
