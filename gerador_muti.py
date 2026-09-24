@@ -4,6 +4,7 @@ import json
 import asyncio
 import time
 import shutil
+import zipfile
 import genanki
 import edge_tts
 from deep_translator import GoogleTranslator
@@ -32,17 +33,17 @@ except ImportError:
     unidecode = None
 
 # ==========================================
-# 1. DICIONÁRIO DE IDIOMAS E VOZES NEURAIS
+# 1. DICIONÁRIO DE IDIOMAS E VOZES NEURAIS (ALTA QUALIDADE / NATIVAS)
 # ==========================================
 IDIOMAS_CONFIG = {
     "ar": {"nome": "Arabe", "code": "ar", "voz": "ar-SA-HamedNeural", "translit": True},
-    "zh": {"nome": "Chines", "code": "zh-CN", "voz": "zh-CN-YunxiNeural", "translit": True},
-    "ja": {"nome": "Japones", "code": "ja", "voz": "ja-JP-KeitaNeural", "translit": True},
-    "ru": {"nome": "Russo", "code": "ru", "voz": "ru-RU-DmitryNeural", "translit": True},
-    "de": {"nome": "Alemao", "code": "de", "voz": "de-DE-ConradNeural", "translit": False},
-    "fr": {"nome": "Frances", "code": "fr", "voz": "fr-FR-HenriNeural", "translit": False},
-    "es": {"nome": "Espanhol", "code": "es", "voz": "es-ES-AlvaroNeural", "translit": False},
-    "it": {"nome": "Italiano", "code": "it", "voz": "it-IT-DiegoNeural", "translit": False},
+    "zh": {"nome": "Chines", "code": "zh-CN", "voz": "zh-CN-XiaoxiaoNeural", "translit": True},
+    "ja": {"nome": "Japones", "code": "ja", "voz": "ja-JP-NanamiNeural", "translit": True},
+    "ru": {"nome": "Russo", "code": "ru", "voz": "ru-RU-SvetlanaNeural", "translit": True},
+    "de": {"nome": "Alemao", "code": "de", "voz": "de-DE-KillianNeural", "translit": False},
+    "fr": {"nome": "Frances", "code": "fr", "voz": "fr-FR-DeniseNeural", "translit": False},
+    "es": {"nome": "Espanhol", "code": "es", "voz": "es-ES-ElviraNeural", "translit": False}, # Espanhol da Espanha Exclusivo
+    "it": {"nome": "Italiano", "code": "it", "voz": "it-IT-IsabellaNeural", "translit": False},
 }
 
 # ==========================================
@@ -54,11 +55,12 @@ MODELO_POLIGLOTA = genanki.Model(
     fields=[
         {'name': 'Numero'},
         {'name': 'Tema'},
-        {'name': 'Palavra'},
+        {'name': 'PalavraIngles'},
+        {'name': 'FraseIngles'},
         {'name': 'IdiomaAlvo'},
         {'name': 'Transliteracao'},
         {'name': 'AudioAlvo'},
-        {'name': 'Portugues'},
+        {'name': 'PalavraPortugues'},
         {'name': 'FrasePortugues'}
     ],
     templates=[{
@@ -66,8 +68,8 @@ MODELO_POLIGLOTA = genanki.Model(
         'qfmt': '''
             <div style="font-family: Arial; text-align: center; margin-top: 20px;">
                 <div style="font-size: 14px; color: #7f8c8d; margin-bottom: 15px; font-weight: bold;">🧾 {{Tema}}</div>
-                <div style="font-size: 24px; margin-bottom: 15px;">{{Palavra}}</div>
-                <div style="font-size: 24px;">{{IdiomaAlvo}}</div>
+                <div style="font-size: 20px; font-weight: bold; margin-bottom: 15px; color: #34495e;">🇺🇸 {{FraseIngles}}</div>
+                <div style="font-size: 24px; margin-bottom: 15px; color: #2c3e50;">🎯 {{IdiomaAlvo}}</div>
                 <br>
                 {{#Transliteracao}}
                     <div style="color: #7f8c8d; font-style: italic; font-size: 22px; margin-bottom: 20px;">{{Transliteracao}}</div>
@@ -78,9 +80,9 @@ MODELO_POLIGLOTA = genanki.Model(
         'afmt': '''
             {{FrontSide}}
             <hr id="answer" style="border-top: 1px solid #ccc; margin: 25px 0;">
-            <div style="font-size: 22px; color: #e65729; text-align: center;">{{Portugues}}</div>
+            <div style="font-size: 22px; color: #e65729; text-align: center;">🇧🇷 {{FrasePortugues}}</div>
             <br>
-            <div style="font-size: 22px; color: #2ecc71; text-align: center;">{{FrasePortugues}}</div>
+            <div style="font-size: 18px; color: #2ecc71; text-align: center;">Vocabulário Foco: {{PalavraIngles}} ➔ {{PalavraPortugues}}</div>
         ''',
     }],
     css='''
@@ -147,140 +149,94 @@ def extrair_partes_linha(linha: str):
         return [parte.strip() for parte in linha.split(';')]
     return [linha.strip()]
 
-
 def gerar_transliteracao(texto: str, lang: str) -> str:
     if not IDIOMAS_CONFIG[lang]["translit"]: return ""
     out = texto
     try:
         if lang == "zh":
-            if lazy_pinyin is None:
-                return ""
+            if lazy_pinyin is None: return ""
             out = " ".join(lazy_pinyin(texto))
         elif lang == "ja":
-            if pykakasi is None:
-                return ""
+            if pykakasi is None: return ""
             kks = pykakasi.kakasi()
             out = " ".join([item['hepburn'] for item in kks.convert(texto)])
         elif lang == "ru":
-            if translit is None:
-                return ""
+            if translit is None: return ""
             out = translit(texto, 'ru', reversed=True)
-        elif lang == "ar": return romanizar_arabe(texto)
+        elif lang == "ar": 
+            return romanizar_arabe(texto)
     except Exception:
         return ""
     return limpar_texto(out)
 
 # ==========================================
-# 4. MOTORES COM CACHE E TIMEOUT (ANTIFREEZE)
+# 4. MOTORES DE CACHE E TRADUÇÃO INSISTENTE (ANTI-FALHA)
 # ==========================================
 CACHE_ARQUIVO = "cache_traducoes.json"
-CACHE_BACKUP = f"{CACHE_ARQUIVO}.bak"
-
 
 def carregar_cache():
-    if not os.path.exists(CACHE_ARQUIVO):
-        return {}
-
+    if not os.path.exists(CACHE_ARQUIVO): return {}
     try:
         with open(CACHE_ARQUIVO, 'r', encoding='utf-8') as f:
-            cache = json.load(f)
-        if isinstance(cache, dict):
-            return cache
+            return json.load(f)
+    except Exception:
         return {}
-    except (json.JSONDecodeError, OSError, ValueError):
-        print(f"[!] Cache corrompido em {CACHE_ARQUIVO}. Reiniciando cache em memória.")
-        try:
-            if os.path.exists(CACHE_ARQUIVO):
-                shutil.copy2(CACHE_ARQUIVO, CACHE_BACKUP)
-        except OSError:
-            pass
-        return {}
-
 
 def salvar_cache(cache):
     temp_path = f"{CACHE_ARQUIVO}.tmp"
-
-    for tentativa in range(1, 7):
-        try:
-            with open(temp_path, 'w', encoding='utf-8') as f:
-                json.dump(cache, f, ensure_ascii=False, indent=4)
-                f.flush()
-                os.fsync(f.fileno())
-
-            os.replace(temp_path, CACHE_ARQUIVO)
-            return
-        except PermissionError:
-            if os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                except OSError:
-                    pass
-
-            if tentativa == 6:
-                raise
-            time.sleep(0.5 * tentativa)
-        except OSError:
-            if os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                except OSError:
-                    pass
-
-            if tentativa == 6:
-                raise
-            time.sleep(0.5 * tentativa)
-
-    if os.path.exists(temp_path):
-        try:
-            os.remove(temp_path)
-        except OSError:
-            pass
-
-
-def obter_cache_compativel(cache, numero_registro, index, frase_en, lang):
-    chave_nova = f"{numero_registro}_{frase_en}_{lang}"
-    chave_legacy = f"{index}_{frase_en}_{lang}"
-
-    if chave_nova in cache:
-        return cache[chave_nova]
-
-    if chave_legacy in cache:
-        valor = cache[chave_legacy]
-        cache[chave_nova] = valor
-        if chave_nova != chave_legacy:
-            del cache[chave_legacy]
-        salvar_cache(cache)
-        return valor
-
-    return None
-
-async def traduzir_com_timeout(texto: str, config_code: str, timeout=15):
-    def _traduzir():
-        return GoogleTranslator(source='en', target=config_code).translate(texto)
     try:
-        await asyncio.sleep(0.5) # Proteção anti-bloqueio de IP do Google
-        return await asyncio.wait_for(asyncio.to_thread(_traduzir), timeout=timeout)
+        with open(temp_path, 'w', encoding='utf-8') as f:
+            json.dump(cache, f, ensure_ascii=False, indent=4)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, CACHE_ARQUIVO)
     except Exception:
-        return None
-    
-async def gerar_audio_com_timeout(texto: str, caminho: str, voz: str, timeout=20):
+        pass
+
+async def traduzir_com_insistencia(texto: str, config_code: str):
+    """Loop infinito com backoff. O script só avança se a tradução for um sucesso absoluto."""
+    tentativa = 1
+    espera = 2
+    while True:
+        try:
+            await asyncio.sleep(espera)
+            def _traduzir():
+                return GoogleTranslator(source='en', target=config_code).translate(texto)
+                
+            resultado = await asyncio.wait_for(asyncio.to_thread(_traduzir), timeout=25)
+            
+            # Validação rigorosa: Não pode ser vazio e não pode ter erro.
+            if resultado and isinstance(resultado, str) and resultado.strip() and "Erro de Tradução" not in resultado:
+                return limpar_texto(resultado)
+        except Exception as e:
+            print(f"    [!] Alerta da API ({config_code}). Tentativa {tentativa}. Aguardando para tentar novamente...")
+            
+        tentativa += 1
+        espera = min(espera + 3, 30) # Aumenta gradualmente a espera para evitar ban de IP
+
+async def gerar_audio_com_insistencia(texto: str, caminho: str, voz: str):
+    """Garante a entrega do arquivo MP3 independentemente de instabilidades de rede."""
     if os.path.exists(caminho): return True
-    for _ in range(3):
+    tentativa = 1
+    espera = 2
+    while True:
         try:
             comunicador = edge_tts.Communicate(texto, voz)
-            await asyncio.wait_for(comunicador.save(caminho), timeout=timeout)
+            await asyncio.wait_for(comunicador.save(caminho), timeout=35)
             return True
-        except Exception:
-            await asyncio.sleep(2)
-    return False
+        except Exception as e:
+            print(f"    [!] Alerta EdgeTTS ({voz}). Tentativa {tentativa}. Aguardando...")
+            await asyncio.sleep(espera)
+            
+        tentativa += 1
+        espera = min(espera + 2, 20)
 
 # ==========================================
 # 5. LOOP CENTRAL ASSÍNCRONO
 # ==========================================
 async def processar_banco_dados(caminho_arquivo: str):
-    # --- SISTEMA ANTI-CORTE DA NUVEM ---
     tempo_inicio = time.time()
-    tempo_limite = 5.5 * 3600 # Limite seguro de 5 horas e meia
+    tempo_limite = 5.5 * 3600 # Proteção anti-corte do GitHub Actions (5.5h)
     
     arquivo_progresso = "linha_progresso.txt"
     linha_inicial = 0
@@ -289,10 +245,17 @@ async def processar_banco_dados(caminho_arquivo: str):
             conteudo = f.read().strip()
             if conteudo.isdigit():
                 linha_inicial = int(conteudo)
-    # -----------------------------------
 
     pasta_audios = "audios_poliglota"
     os.makedirs(pasta_audios, exist_ok=True)
+    
+    # Criar pastas para cada idioma dentro de audios_poliglota
+    pastas_idiomas = {}
+    for lang in IDIOMAS_CONFIG:
+        pasta_lang = os.path.join(pasta_audios, lang)
+        os.makedirs(pasta_lang, exist_ok=True)
+        pastas_idiomas[lang] = pasta_lang
+
     cache = carregar_cache()
     
     baralhos = {}
@@ -308,11 +271,9 @@ async def processar_banco_dados(caminho_arquivo: str):
     print(f"[*] Base: {len(linhas)} registros. Continuando a partir da linha {linha_inicial}...\n")
 
     for index, linha in enumerate(linhas):
-        # Pula as linhas que já foram empacotadas no lote anterior
         if index < linha_inicial:
             continue
             
-        # Verifica o cronômetro para não ser morto pelo GitHub
         if time.time() - tempo_inicio > tempo_limite:
             print(f"\n[ALERTA] Limite de 5h30 atingido! Pausando no registro {index}.")
             with open(arquivo_progresso, "w") as f:
@@ -324,12 +285,12 @@ async def processar_banco_dados(caminho_arquivo: str):
 
         partes = extrair_partes_linha(linha)
 
-        # Preserva o número, o tema e a palavra do TSV para montar o cartão completo.
-        if len(partes) >= 9:
+        # Alterado de >=9 para >=7 para garantir a importação das exatas 6070 sentenças sem skip.
+        if len(partes) >= 7:
             numero_registro = int(partes[0].strip()) if partes[0].strip().isdigit() else index + 1
             tema = partes[1].strip()
             palavra_en = partes[2].strip()
-            traducao_palavra_pt = partes[3].strip()
+            palavra_pt = partes[3].strip()
             frase_en = partes[4].strip()
             frase_pt = partes[6].strip()
         else:
@@ -342,73 +303,61 @@ async def processar_banco_dados(caminho_arquivo: str):
 
         for lang, config in IDIOMAS_CONFIG.items():
             chave_lang = f"{chave_cache_base}_{lang}"
-            chave_legacy = f"{index}_{frase_en}_{lang}"
             chave_palavra_lang = f"palavra_{numero_registro}_{palavra_en}_{lang}"
 
-            # === 1. AUDITORIA E TRADUÇÃO DA FRASE ===
-            frase_cache = cache.get(chave_lang) or cache.get(chave_legacy)
-            resultado_frase = await traduzir_com_timeout(frase_en, config['code'])
-            
-            if resultado_frase and "Erro de Tradução" not in resultado_frase:
-                frase_alvo = limpar_texto(resultado_frase)
-                
-                # Se a versão do Google atual for diferente do Cache, atualiza e avisa no terminal
-                if frase_cache and frase_cache != frase_alvo and frase_cache != "Erro de Tradução":
-                    print(f"\n[AUDITORIA FRASE | Linha {numero_registro} | Idioma: {lang.upper()}]")
-                    print(f"  [-] Errado no Cache: {frase_cache}")
-                    print(f"  [+] Corrigido (Google): {frase_alvo}")
-                
+            # === 1. TRADUÇÃO DA FRASE ===
+            frase_cache = cache.get(chave_lang)
+            if frase_cache and "Erro de Tradução" not in frase_cache:
+                frase_alvo = frase_cache
+            else:
+                frase_alvo = await traduzir_com_insistencia(frase_en, config['code'])
                 cache[chave_lang] = frase_alvo
                 salvar_cache(cache)
-            else:
-                frase_alvo = frase_cache if (frase_cache and frase_cache != "Erro de Tradução") else "Erro de Tradução"
 
-            # === 2. AUDITORIA E TRADUÇÃO DA PALAVRA ISOLADA ===
+            # === 2. TRADUÇÃO DA PALAVRA ISOLADA ===
             if lang == "en":
                 palavra_alvo = palavra_en
             else:
                 palavra_cache = cache.get(chave_palavra_lang)
-                resultado_palavra = await traduzir_com_timeout(palavra_en, config['code'])
-                
-                if resultado_palavra and "Erro de Tradução" not in resultado_palavra:
-                    palavra_alvo = limpar_texto(resultado_palavra)
-                    
-                    # Compara a palavra solta do Google com o Cache
-                    if palavra_cache and palavra_cache != palavra_alvo and palavra_cache != "Erro de Tradução":
-                        print(f"\n[AUDITORIA PALAVRA | Linha {numero_registro} | Idioma: {lang.upper()}]")
-                        print(f"  [-] Errado no Cache: {palavra_cache}")
-                        print(f"  [+] Corrigido (Google): {palavra_alvo}")
-                    
+                if palavra_cache and "Erro de Tradução" not in palavra_cache:
+                    palavra_alvo = palavra_cache
+                else:
+                    palavra_alvo = await traduzir_com_insistencia(palavra_en, config['code'])
                     cache[chave_palavra_lang] = palavra_alvo
                     salvar_cache(cache)
-                else:
-                    palavra_alvo = palavra_cache if (palavra_cache and palavra_cache != "Erro de Tradução") else "Erro de Tradução"
            
-            # ROMANIZAÇÃO
+            # === 3. ROMANIZAÇÃO ===
             translit_str = gerar_transliteracao(frase_alvo, lang)
 
-            # ÁUDIO
+            # === 4. ÁUDIO ===
             nome_audio = f"{lang}_{numero_registro}.mp3"
-            caminho_audio = os.path.join(pasta_audios, nome_audio)
+            # Salvar dentro da pasta do idioma específico
+            caminho_audio = os.path.join(pastas_idiomas[lang], nome_audio)
 
-            if frase_alvo != "Erro de Tradução":
-                await gerar_audio_com_timeout(frase_alvo, caminho_audio, config['voz'])
+            # A garantia de áudio agora é forte devido ao while loop da tradução
+            await gerar_audio_com_insistencia(frase_alvo, caminho_audio, config['voz'])
 
             campo_audio = f"[sound:{nome_audio}]" if os.path.exists(caminho_audio) else ""
             if os.path.exists(caminho_audio): midias[lang].append(caminho_audio)
 
-            # O áudio em português e o IPA inglês não fazem parte deste modelo.
+            # O modelo refatorado adiciona a frase em inglês e as lógicas de alvo/PT.
             nota = genanki.Note(
                 model=MODELO_POLIGLOTA,
                 fields=[
-                    str(numero_registro), tema, palavra_alvo, frase_alvo,
-                    translit_str, campo_audio, traducao_palavra_pt, frase_pt
+                    str(numero_registro), 
+                    tema, 
+                    palavra_en,
+                    frase_en,
+                    frase_alvo,
+                    translit_str, 
+                    campo_audio, 
+                    palavra_pt, 
+                    frase_pt
                 ]
             )
             baralhos[lang].add_note(nota)
 
     else:
-        # Se o loop processar todas as 6070 linhas sem estourar o tempo
         print("\n[SUCESSO] Todo o banco de dados foi processado e finalizado!")
         with open(arquivo_progresso, "w") as f:
             f.write("0")
@@ -418,21 +367,48 @@ async def processar_banco_dados(caminho_arquivo: str):
     # ==========================================
     print("\n=================================")
     print("Processamento Finalizado. Empacotando Decks .apkg...")
+    pacotes_gerados = []
     for lang, baralho in baralhos.items():
         if len(baralho.notes) > 0:
-            nome_pacote = f"Pacote_{IDIOMAS_CONFIG[lang]['nome']}.apkg"
+            nome_pacote = f"Pacote_Fluentli_{IDIOMAS_CONFIG[lang]['nome']}.apkg"
             pacote = genanki.Package(baralho)
             pacote.media_files = midias[lang]
             try:
                 pacote.write_to_file(nome_pacote)
+                pacotes_gerados.append(nome_pacote)
                 print(f"  [+] SUCESSO: {nome_pacote} gerado!")
             except Exception as e:
                 print(f"  [-] Erro ao salvar {nome_pacote}: {e}")
+                
+    print("\n=================================")
+    print("Criando arquivo ZIP final contendo os decks, pastas de áudio e o cache...")
+    nome_zip = "Pacotes_Completos_Fluentli.zip"
+    
+    with zipfile.ZipFile(nome_zip, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        # Adicionar os apkg
+        for pct in pacotes_gerados:
+            if os.path.exists(pct):
+                zipf.write(pct, os.path.basename(pct))
+        
+        # Adicionar as pastas de aúdio
+        for root, dirs, files in os.walk(pasta_audios):
+            for file in files:
+                caminho_arquivo = os.path.join(root, file)
+                # Preservar a estrutura de pastas dentro do zip (ex: audios_poliglota/ar/ar_1.mp3)
+                arcname = os.path.relpath(caminho_arquivo, start='.')
+                zipf.write(caminho_arquivo, arcname)
+                
+        # Adicionar o cache
+        if os.path.exists(CACHE_ARQUIVO):
+            zipf.write(CACHE_ARQUIVO, os.path.basename(CACHE_ARQUIVO))
+            
+    print(f"  [+] SUCESSO: Arquivo {nome_zip} gerado com sucesso!")
 
 if __name__ == "__main__":
-    ARQUIVO_ALVO = "anki_principal_v2.tsv"
+    ARQUIVO_ALVO = "anki_principal_v2.tsv" # ou "anki_principal_v2 (1).tsv", o nome do arquivo TSV
     
     if os.name == 'nt':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         
     asyncio.run(processar_banco_dados(ARQUIVO_ALVO))
+
